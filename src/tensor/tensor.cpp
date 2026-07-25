@@ -284,4 +284,7 @@ tensor_t Tensor::to(llaisysDeviceType_t device_type, int device) const {
     return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
 }
 
+
 } // namespace llaisys
+
+
