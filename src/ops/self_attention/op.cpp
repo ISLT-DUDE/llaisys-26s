@@ -2,7 +2,7 @@
 
 #include "../../core/llaisys_core.hpp"
 #include "../../utils.hpp"
-
+#include <cstring>
 #include "cpu/self_attention_cpu.hpp"
 
 namespace llaisys::ops {
