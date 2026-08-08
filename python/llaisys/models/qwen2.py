@@ -138,12 +138,15 @@ class Qwen2:
         )
         api.device_synchronize()
 
+        EOS_TOKEN_ID = 151643
         next_token = self._sample(logits_np, temperature, top_k, top_p)
         generated.append(next_token)
         _destroy_tensor(input_tensor)
         _destroy_tensor(logits_tensor)
 
         for _ in range(1, max_new_tokens):
+            if next_token == EOS_TOKEN_ID:
+                break
             input_ids_np = np.array([next_token], dtype=np.int64)
             input_tensor = _create_tensor(
                 [1], DataType.I64, self.device, self.device_id
