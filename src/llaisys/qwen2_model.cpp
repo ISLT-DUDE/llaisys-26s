@@ -9,22 +9,27 @@
 #include <cstring>
 #include <numeric>
 
+#ifdef ENABLE_NVIDIA_API
+// Declare cudaMemcpy from libcudart (linked via xmake.lua)
+extern "C" {
+    enum cudaMemcpyKind { cudaMemcpyHostToHost = 0, cudaMemcpyHostToDevice = 1, cudaMemcpyDeviceToHost = 2, cudaMemcpyDeviceToDevice = 3, cudaMemcpyDefault = 4 };
+    int cudaMemcpy(void* dst, const void* src, size_t count, int kind);
+}
+#endif
+
 namespace llaisys {
 namespace models {
 
 Qwen2Model::Qwen2Model(llaisysDeviceType_t device_type, int device_id)
     : device_type(device_type), device_id(device_id) {
-    // Initialize KV cache
     size_t head_dim = config.hidden_size / config.num_attention_heads;
     max_cache_len = config.max_position_embeddings;
 
     kv_caches.resize(config.num_hidden_layers);
     for (size_t i = 0; i < config.num_hidden_layers; i++) {
-        // Key cache: [max_cache_len, num_kv_heads, head_dim]
         kv_caches[i].key = createTensor(
             {max_cache_len, config.num_key_value_heads, head_dim},
             LLAISYS_DTYPE_F32);
-        // Value cache: [max_cache_len, num_kv_heads, head_dim]
         kv_caches[i].value = createTensor(
             {max_cache_len, config.num_key_value_heads, head_dim},
             LLAISYS_DTYPE_F32);
@@ -70,13 +75,10 @@ void Qwen2Model::transformerLayer(
     size_t num_kv_heads = config.num_key_value_heads;
     auto no_bias = createTensor({0}, LLAISYS_DTYPE_F32);
 
-    // --- Self-Attention ---
-    // RMS norm before attention
     auto attn_norm_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".input_layernorm.weight");
     auto attn_norm_hidden = createTensor({seq_len, config.hidden_size}, LLAISYS_DTYPE_F32);
     ops::rms_norm(attn_norm_hidden, hidden_states, attn_norm_weight, config.rms_norm_eps);
 
-    // QKV projection
     auto q_proj_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.q_proj.weight");
     auto k_proj_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.k_proj.weight");
     auto v_proj_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.v_proj.weight");
@@ -85,27 +87,18 @@ void Qwen2Model::transformerLayer(
     auto k_proj_bias = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.k_proj.bias");
     auto v_proj_bias = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.v_proj.bias");
 
-    // Q: [seq_len, num_heads * head_dim]
     auto q = createTensor({seq_len, config.hidden_size}, LLAISYS_DTYPE_F32);
-    ops::linear(q, attn_norm_hidden, q_proj_weight, q_proj_bias);
-
-    // K: [seq_len, num_kv_heads * head_dim]
     auto k = createTensor({seq_len, num_kv_heads * head_dim}, LLAISYS_DTYPE_F32);
-    ops::linear(k, attn_norm_hidden, k_proj_weight, k_proj_bias);
-
-    // V: [seq_len, num_kv_heads * head_dim]
     auto v = createTensor({seq_len, num_kv_heads * head_dim}, LLAISYS_DTYPE_F32);
+
+    ops::linear(q, attn_norm_hidden, q_proj_weight, q_proj_bias);
+    ops::linear(k, attn_norm_hidden, k_proj_weight, k_proj_bias);
     ops::linear(v, attn_norm_hidden, v_proj_weight, v_proj_bias);
 
-    // Reshape Q/K/V to [seq_len, num_heads, head_dim] for RoPE and self-attention
-    // Q: [seq_len, num_heads * head_dim] -> [seq_len, num_heads, head_dim]
     auto q_rope = q->view({seq_len, num_heads, head_dim});
-    // K: [seq_len, num_kv_heads * head_dim] -> [seq_len, num_kv_heads, head_dim]
     auto k_rope = k->view({seq_len, num_kv_heads, head_dim});
-    // V: [seq_len, num_kv_heads * head_dim] -> [seq_len, num_kv_heads, head_dim]
     auto v_contiguous = v->view({seq_len, num_kv_heads, head_dim});
 
-    // Apply RoPE
     auto pos_ids_data = new int64_t[seq_len];
     for (size_t i = 0; i < seq_len; i++) {
         pos_ids_data[i] = static_cast<int64_t>(start_pos + i);
@@ -118,44 +111,40 @@ void Qwen2Model::transformerLayer(
     ops::rope(k_rope, k_rope, pos_ids, config.rope_theta);
 
     // Update KV cache
-    // KV cache layout: [max_cache_len, num_kv_heads, head_dim]
-    // k_rope layout: [seq_len, num_kv_heads, head_dim]
     auto &kv_cache = kv_caches[layer_idx];
     size_t cache_pos = kv_cache.current_seq_len;
 
     for (size_t h = 0; h < num_kv_heads; h++) {
-        // k_rope[h] offset: h * seq_len * head_dim
-        float *k_src = reinterpret_cast<float *>(k_rope->data()) + h * seq_len * head_dim;
-        // kv_cache.key[h] offset: h * max_cache_len * head_dim + cache_pos * head_dim
-        // But kv_cache is [max_cache_len, num_kv_heads, head_dim], so element (t, h, k) is at (t * num_kv_heads * head_dim + h * head_dim + k)
+        // FIXED: source offset is h * head_dim, not h * seq_len * head_dim
+        float *k_src = reinterpret_cast<float *>(k_rope->data()) + h * head_dim;
         float *k_dst = reinterpret_cast<float *>(kv_cache.key->data()) + cache_pos * num_kv_heads * head_dim + h * head_dim;
-        // Copy seq_len rows, each row is head_dim floats, stride = num_kv_heads * head_dim
         for (size_t s = 0; s < seq_len; s++) {
-            memcpy(k_dst + s * num_kv_heads * head_dim, k_src + s * head_dim, head_dim * sizeof(float));
+            cudaMemcpy(k_dst + s * num_kv_heads * head_dim, k_src + s * num_kv_heads * head_dim,
+                       head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
         }
 
-        float *v_src = reinterpret_cast<float *>(v_contiguous->data()) + h * seq_len * head_dim;
+        float *v_src = reinterpret_cast<float *>(v_contiguous->data()) + h * head_dim;
         float *v_dst = reinterpret_cast<float *>(kv_cache.value->data()) + cache_pos * num_kv_heads * head_dim + h * head_dim;
         for (size_t s = 0; s < seq_len; s++) {
-            memcpy(v_dst + s * num_kv_heads * head_dim, v_src + s * head_dim, head_dim * sizeof(float));
+            cudaMemcpy(v_dst + s * num_kv_heads * head_dim, v_src + s * num_kv_heads * head_dim,
+                       head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
         }
     }
     kv_cache.current_seq_len = cache_pos + seq_len;
 
     // Self-attention
-    // Extract valid portion of KV cache into contiguous tensor [kv_len, num_kv_heads, head_dim]
     size_t kv_len = kv_cache.current_seq_len;
     auto kv_key = createTensor({kv_len, num_kv_heads, head_dim}, LLAISYS_DTYPE_F32);
     auto kv_value = createTensor({kv_len, num_kv_heads, head_dim}, LLAISYS_DTYPE_F32);
     for (size_t h = 0; h < num_kv_heads; h++) {
         for (size_t t = 0; t < kv_len; t++) {
-            float *k_src = reinterpret_cast<float *>(kv_cache.key->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            float *k_dst = reinterpret_cast<float *>(kv_key->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            memcpy(k_dst, k_src, head_dim * sizeof(float));
+            float *k_src_cache = reinterpret_cast<float *>(kv_cache.key->data()) + t * num_kv_heads * head_dim + h * head_dim;
+            float *k_dst_cache = reinterpret_cast<float *>(kv_key->data()) + t * num_kv_heads * head_dim + h * head_dim;
+            cudaMemcpy(k_dst_cache, k_src_cache, head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
 
-            float *v_src = reinterpret_cast<float *>(kv_cache.value->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            float *v_dst = reinterpret_cast<float *>(kv_value->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            memcpy(v_dst, v_src, head_dim * sizeof(float));
+            float *v_src_cache = reinterpret_cast<float *>(kv_cache.value->data()) + t * num_kv_heads * head_dim + h * head_dim;
+            float *v_dst_cache = reinterpret_cast<float *>(kv_value->data()) + t * num_kv_heads * head_dim + h * head_dim;
+            cudaMemcpy(v_dst_cache, v_src_cache, head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
         }
     }
 
@@ -163,18 +152,15 @@ void Qwen2Model::transformerLayer(
     auto attn_output = createTensor({seq_len, num_heads, head_dim}, LLAISYS_DTYPE_F32);
     ops::self_attention(attn_output, q_rope, kv_key, kv_value, scale);
 
-    // Flatten attention output: [seq_len, num_heads, head_dim] -> [seq_len, num_heads * head_dim]
     auto attn_flat = attn_output->view({seq_len, config.hidden_size});
 
-    // Output projection (no bias for o_proj)
     auto o_proj_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".self_attn.o_proj.weight");
     auto attn_out = createTensor({seq_len, config.hidden_size}, LLAISYS_DTYPE_F32);
     ops::linear(attn_out, attn_flat, o_proj_weight, no_bias);
 
-    // Residual connection
     ops::add(hidden_states, hidden_states, attn_out);
 
-    // --- FFN ---
+    // FFN
     auto ffn_norm_weight = getWeight("model.layers." + std::to_string(layer_idx) + ".post_attention_layernorm.weight");
     auto ffn_norm_hidden = createTensor({seq_len, config.hidden_size}, LLAISYS_DTYPE_F32);
     ops::rms_norm(ffn_norm_hidden, hidden_states, ffn_norm_weight, config.rms_norm_eps);
@@ -209,7 +195,12 @@ void Qwen2Model::finalNormAndHead(tensor_t hidden_states, tensor_t logits) {
 
     auto lm_head_weight = getWeight("lm_head.weight");
     auto no_bias = createTensor({0}, LLAISYS_DTYPE_F32);
-    ops::linear(logits, normed, lm_head_weight, no_bias);
+    auto logits_2d = createTensor({1, config.vocab_size}, LLAISYS_DTYPE_F32);
+    ops::linear(logits_2d, normed, lm_head_weight, no_bias);
+
+    float *src = reinterpret_cast<float *>(logits_2d->data());
+    float *dst = reinterpret_cast<float *>(logits->data());
+    cudaMemcpy(dst, src, config.vocab_size * sizeof(float), cudaMemcpyDeviceToDevice);
 }
 
 void Qwen2Model::forward(tensor_t input_ids, tensor_t output_logits) {
