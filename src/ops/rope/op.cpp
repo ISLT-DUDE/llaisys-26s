@@ -1,11 +1,21 @@
 #include "op.hpp"
 
 #include "../../core/llaisys_core.hpp"
+#include "../../device/runtime_api.hpp"
 #include "../../utils.hpp"
 
+
 #include "cpu/rope_cpu.hpp"
+#ifdef ENABLE_NVIDIA_API
+#include "nvidia/rope_nvidia.hpp"
+#endif
+
 
 #include <cmath>
+#include <cstring>
+
+
+
 
 namespace llaisys::ops {
 void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
@@ -24,20 +34,41 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
     std::vector<float> cos_buf(seq_len * head_dim);
     std::vector<float> sin_buf(seq_len * head_dim);
 
-    // Read pos_ids as int64_t
+    // Read pos_ids as int64_t. For device tensors (e.g. NVIDIA), the data pointer
+    // is a device pointer, so copy it to a host buffer first.
+    std::vector<int64_t> pos_host(seq_len);
     const int64_t *pos_data = reinterpret_cast<const int64_t *>(pos_ids->data());
+    if (pos_ids->deviceType() == LLAISYS_DEVICE_CPU) {
+        std::memcpy(pos_host.data(), pos_data, seq_len * sizeof(int64_t));
+    } else {
+        llaisys::device::getRuntimeAPI(pos_ids->deviceType())
+            ->memcpy_sync(pos_host.data(), pos_data, seq_len * sizeof(int64_t),
+                          LLAISYS_MEMCPY_D2H);
+    }
     for (size_t i = 0; i < seq_len; i++) {
-        float pos = static_cast<float>(pos_data[i]);
+        float pos = static_cast<float>(pos_host[i]);
         for (size_t j = 0; j < half_dim; j++) {
-            float freq = pos / std::pow(theta, 2.0f * j / head_dim);
-            float c = std::cos(freq);
-            float s = std::sin(freq);
+            // Compute freq matching Torch: positions / (theta ** (2*j/head_dim))
+            // Torch computes theta ** (float32) using float32 arithmetic.
+            // Use float32 powf to match Torch's float32 computation.
+            float exponent = 2.0f * static_cast<float>(j) / static_cast<float>(head_dim);
+            float denom = powf(theta, exponent);
+            float freq = pos / denom;
+            // Use float32 cosf/sinf to match Torch's float32 cos/sin.
+            float c = cosf(freq);
+            float s = sinf(freq);
+
             cos_buf[i * head_dim + j] = c;
             cos_buf[i * head_dim + j + half_dim] = c; // cos repeats for second half
             sin_buf[i * head_dim + j] = s;
             sin_buf[i * head_dim + j + half_dim] = s; // sin repeats for second half
         }
     }
+
+
+
+
+
 
     if (out->deviceType() == LLAISYS_DEVICE_CPU) {
         return cpu::rope(out->data(), in->data(),
@@ -56,11 +87,17 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
                          out->dtype(), seq_len, num_heads, head_dim);
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
+        nvidia::rope(out->data(), in->data(),
+                     reinterpret_cast<const int64_t *>(pos_ids->data()), theta,
+                     out->dtype(), seq_len, num_heads, head_dim);
         return;
 #endif
+
+
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
     }
 }
 } // namespace llaisys::ops
+
+
