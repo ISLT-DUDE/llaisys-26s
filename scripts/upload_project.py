@@ -6,7 +6,7 @@ import tempfile
 
 HOST = "42.123.114.169"
 PORT = 32222
-USER = "root+vm-xOEnOjJMBgXs3GCe"
+USER = "root+vm-ejaKuDWnyXvtMqPQ"
 PASSWORD = "Cyx_20020815"
 REMOTE_DIR = "/data/llaisys-26s"
 LOCAL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

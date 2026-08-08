@@ -1,6 +1,7 @@
 #include "qwen2_model.hpp"
 
 #include "../core/llaisys_core.hpp"
+#include "../device/runtime_api.hpp"
 #include "../ops/add/op.hpp"
 #include "../utils.hpp"
 
@@ -8,14 +9,6 @@
 #include <cassert>
 #include <cstring>
 #include <numeric>
-
-#ifdef ENABLE_NVIDIA_API
-// Declare cudaMemcpy from libcudart (linked via xmake.lua)
-extern "C" {
-    enum cudaMemcpyKind { cudaMemcpyHostToHost = 0, cudaMemcpyHostToDevice = 1, cudaMemcpyDeviceToHost = 2, cudaMemcpyDeviceToDevice = 3, cudaMemcpyDefault = 4 };
-    int cudaMemcpy(void* dst, const void* src, size_t count, int kind);
-}
-#endif
 
 namespace llaisys {
 namespace models {
@@ -119,15 +112,19 @@ void Qwen2Model::transformerLayer(
         float *k_src = reinterpret_cast<float *>(k_rope->data()) + h * head_dim;
         float *k_dst = reinterpret_cast<float *>(kv_cache.key->data()) + cache_pos * num_kv_heads * head_dim + h * head_dim;
         for (size_t s = 0; s < seq_len; s++) {
-            cudaMemcpy(k_dst + s * num_kv_heads * head_dim, k_src + s * num_kv_heads * head_dim,
-                       head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
+            llaisys::device::getRuntimeAPI(device_type)
+                ->memcpy_sync(k_dst + s * num_kv_heads * head_dim,
+                              k_src + s * num_kv_heads * head_dim,
+                              head_dim * sizeof(float), LLAISYS_MEMCPY_D2D);
         }
 
         float *v_src = reinterpret_cast<float *>(v_contiguous->data()) + h * head_dim;
         float *v_dst = reinterpret_cast<float *>(kv_cache.value->data()) + cache_pos * num_kv_heads * head_dim + h * head_dim;
         for (size_t s = 0; s < seq_len; s++) {
-            cudaMemcpy(v_dst + s * num_kv_heads * head_dim, v_src + s * num_kv_heads * head_dim,
-                       head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
+            llaisys::device::getRuntimeAPI(device_type)
+                ->memcpy_sync(v_dst + s * num_kv_heads * head_dim,
+                              v_src + s * num_kv_heads * head_dim,
+                              head_dim * sizeof(float), LLAISYS_MEMCPY_D2D);
         }
     }
     kv_cache.current_seq_len = cache_pos + seq_len;
@@ -140,11 +137,15 @@ void Qwen2Model::transformerLayer(
         for (size_t t = 0; t < kv_len; t++) {
             float *k_src_cache = reinterpret_cast<float *>(kv_cache.key->data()) + t * num_kv_heads * head_dim + h * head_dim;
             float *k_dst_cache = reinterpret_cast<float *>(kv_key->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            cudaMemcpy(k_dst_cache, k_src_cache, head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
+            llaisys::device::getRuntimeAPI(device_type)
+                ->memcpy_sync(k_dst_cache, k_src_cache,
+                              head_dim * sizeof(float), LLAISYS_MEMCPY_D2D);
 
             float *v_src_cache = reinterpret_cast<float *>(kv_cache.value->data()) + t * num_kv_heads * head_dim + h * head_dim;
             float *v_dst_cache = reinterpret_cast<float *>(kv_value->data()) + t * num_kv_heads * head_dim + h * head_dim;
-            cudaMemcpy(v_dst_cache, v_src_cache, head_dim * sizeof(float), cudaMemcpyDeviceToDevice);
+            llaisys::device::getRuntimeAPI(device_type)
+                ->memcpy_sync(v_dst_cache, v_src_cache,
+                              head_dim * sizeof(float), LLAISYS_MEMCPY_D2D);
         }
     }
 
@@ -200,7 +201,8 @@ void Qwen2Model::finalNormAndHead(tensor_t hidden_states, tensor_t logits) {
 
     float *src = reinterpret_cast<float *>(logits_2d->data());
     float *dst = reinterpret_cast<float *>(logits->data());
-    cudaMemcpy(dst, src, config.vocab_size * sizeof(float), cudaMemcpyDeviceToDevice);
+    llaisys::device::getRuntimeAPI(device_type)
+        ->memcpy_sync(dst, src, config.vocab_size * sizeof(float), LLAISYS_MEMCPY_D2D);
 }
 
 void Qwen2Model::forward(tensor_t input_ids, tensor_t output_logits) {
