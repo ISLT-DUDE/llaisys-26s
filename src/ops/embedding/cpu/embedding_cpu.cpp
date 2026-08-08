@@ -3,6 +3,7 @@
 #include "../../../utils.hpp"
 
 #include <cstring>
+#include <vector>
 
 template <typename T>
 void embedding_(T *out, const int32_t *indices, const T *weight, size_t seq_len, size_t embed_dim, size_t vocab_size) {
@@ -15,8 +16,21 @@ void embedding_(T *out, const int32_t *indices, const T *weight, size_t seq_len,
 }
 
 namespace llaisys::ops::cpu {
-void embedding(std::byte *out, const std::byte *indices, const std::byte *weight,
-               llaisysDataType_t dtype, size_t seq_len, size_t embed_dim, size_t vocab_size) {
+void embedding(std::byte *out, const std::byte *indices_raw, const std::byte *weight,
+               llaisysDataType_t dtype, size_t seq_len, size_t embed_dim, size_t vocab_size,
+               llaisysDataType_t index_dtype) {
+    // Convert int64 indices to int32 if needed
+    std::vector<int32_t> indices_i32;
+    const int32_t *indices;
+    if (index_dtype == LLAISYS_DTYPE_I64) {
+        indices_i32.resize(seq_len);
+        const int64_t *src = reinterpret_cast<const int64_t *>(indices_raw);
+        for (size_t i = 0; i < seq_len; i++) indices_i32[i] = static_cast<int32_t>(src[i]);
+        indices = indices_i32.data();
+    } else {
+        indices = reinterpret_cast<const int32_t *>(indices_raw);
+    }
+
     switch (dtype) {
     case LLAISYS_DTYPE_F32:
         return embedding_(reinterpret_cast<float *>(out), reinterpret_cast<const int32_t *>(indices),

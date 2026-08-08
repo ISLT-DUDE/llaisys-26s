@@ -2,9 +2,9 @@
 import os
 import paramiko
 
-HOST = "42.123.114.169"
+HOST = "140.207.205.81"
 PORT = 32222
-USER = "root+vm-ejaKuDWnyXvtMqPQ"
+USER = "root+vm-3BQMrtEHcRqkOMov"
 PASSWORD = "Cyx_20020815"
 REMOTE_BASE = "/data/llaisys-26s"
 LOCAL_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
