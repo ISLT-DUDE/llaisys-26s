@@ -25,7 +25,7 @@ def load_hf_model(model_path=None, device_name="cpu"):
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float32,
         device_map=torch_device(device_name),
         trust_remote_code=True,
     )
@@ -145,5 +145,14 @@ if __name__ == "__main__":
     print(f"Time elapsed: {(end_time - start_time):.2f}s\n")
 
     if args.test:
+        print("HF tokens:", tokens)
+        print("HF length:", len(tokens))
+        print("LLAISYS tokens:", llaisys_tokens)
+        print("LLAISYS length:", len(llaisys_tokens))
+        diff_idx = next((i for i, (a, b) in enumerate(zip(tokens, llaisys_tokens)) if a != b), None)
+        if diff_idx is not None:
+            print(f"First diff at index {diff_idx}: HF={tokens[diff_idx]}, LLS={llaisys_tokens[diff_idx]}")
+        else:
+            print("All overlapping tokens match")
         assert llaisys_tokens == tokens
         print("\033[92mTest passed!\033[0m\n")
