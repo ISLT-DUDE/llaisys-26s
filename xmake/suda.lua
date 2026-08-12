@@ -11,5 +11,8 @@ target("llaisys-device-suda")
     -- Suda device files (pure C++ stubs, no CUDA)
     add_files("../src/device/suda/*.cpp")
 
+    -- Suda operator kernel stubs
+    add_files("../src/ops/*/suda/*.cpp")
+
     on_install(function (target) end)
 target_end()

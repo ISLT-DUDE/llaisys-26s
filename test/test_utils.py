@@ -200,7 +200,10 @@ def llaisys_device(device_name: str):
     elif device_name == "nvidia":
         return llaisys.DeviceType.NVIDIA
     elif device_name == "suda":
-        return llaisys.DeviceType.SUDA
+        try:
+            return llaisys.DeviceType.SUDA
+        except AttributeError:
+            return llaisys.DeviceType(2)
     else:
         raise ValueError(f"Unsupported device name: {device_name}")
 
@@ -210,7 +213,7 @@ def device_name(llaisys_device: llaisys.DeviceType):
         return "cpu"
     elif llaisys_device == llaisys.DeviceType.NVIDIA:
         return "nvidia"
-    elif llaisys_device == llaisys.DeviceType.SUDA:
+    elif llaisys_device.value == 2 or llaisys_device == getattr(llaisys.DeviceType, 'SUDA', None):
         return "suda"
     else:
         raise ValueError(f"Unsupported llaisys device: {llaisys_device}")

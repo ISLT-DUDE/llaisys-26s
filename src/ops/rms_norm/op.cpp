@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/rms_norm_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/rms_norm_suda.hpp"
+#endif
 
 namespace llaisys::ops {
 void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
@@ -32,6 +35,11 @@ void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
     case LLAISYS_DEVICE_NVIDIA:
         return nvidia::rms_norm(out->data(), in->data(), weight->data(),
                                 out->dtype(), seq_len, hidden_size, eps);
+#endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        return suda::rms_norm(out->data(), in->data(), weight->data(),
+                              out->dtype(), seq_len, hidden_size, eps);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

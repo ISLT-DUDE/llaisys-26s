@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/self_attention_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/self_attention_suda.hpp"
+#endif
 
 namespace llaisys::ops {
 
