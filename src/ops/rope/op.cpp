@@ -46,22 +46,20 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
                           LLAISYS_MEMCPY_D2H);
     }
     for (size_t i = 0; i < seq_len; i++) {
-        float pos = static_cast<float>(pos_host[i]);
+        // Torch uses float64 for position arithmetic; match it
+        double pos = static_cast<double>(pos_host[i]);
         for (size_t j = 0; j < half_dim; j++) {
             // Compute freq matching Torch: positions / (theta ** (2*j/head_dim))
-            // Torch computes theta ** (float32) using float32 arithmetic.
-            // Use float32 powf to match Torch's float32 computation.
-            float exponent = 2.0f * static_cast<float>(j) / static_cast<float>(head_dim);
-            float denom = powf(theta, exponent);
-            float freq = pos / denom;
-            // Use float32 cosf/sinf to match Torch's float32 cos/sin.
-            float c = cosf(freq);
-            float s = sinf(freq);
+            double exponent = 2.0 * static_cast<double>(j) / static_cast<double>(head_dim);
+            double denom = pow(static_cast<double>(theta), exponent);
+            double freq = pos / denom;
+            double c = cos(freq);
+            double s = sin(freq);
 
-            cos_buf[i * head_dim + j] = c;
-            cos_buf[i * head_dim + j + half_dim] = c; // cos repeats for second half
-            sin_buf[i * head_dim + j] = s;
-            sin_buf[i * head_dim + j + half_dim] = s; // sin repeats for second half
+            cos_buf[i * head_dim + j] = static_cast<float>(c);
+            cos_buf[i * head_dim + j + half_dim] = static_cast<float>(c);
+            sin_buf[i * head_dim + j] = static_cast<float>(s);
+            sin_buf[i * head_dim + j + half_dim] = static_cast<float>(s);
         }
     }
 
