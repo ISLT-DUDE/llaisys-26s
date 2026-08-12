@@ -18,6 +18,18 @@ if has_config("nv-gpu") then
     includes("xmake/nvidia.lua")
 end
 
+-- Suda --
+option("suda-gpu")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Whether to compile implementations for Suda (Days Technology) GPU")
+option_end()
+
+if has_config("suda-gpu") then
+    add_defines("ENABLE_SUDA_API")
+    includes("xmake/suda.lua")
+end
+
 target("llaisys-utils")
     set_kind("static")
 
@@ -39,6 +51,9 @@ target("llaisys-device")
     add_deps("llaisys-device-cpu")
     if has_config("nv-gpu") then
         add_deps("llaisys-device-nvidia")
+    end
+    if has_config("suda-gpu") then
+        add_deps("llaisys-device-suda")
     end
 
     set_languages("cxx17")
