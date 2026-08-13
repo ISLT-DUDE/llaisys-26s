@@ -7,6 +7,9 @@
 #ifdef ENABLE_NVIDIA_API
 #include "nvidia/self_attention_nvidia.hpp"
 #endif
+#ifdef ENABLE_SUDA_API
+#include "suda/self_attention_suda.hpp"
+#endif
 
 namespace llaisys::ops {
 
@@ -118,6 +121,12 @@ void self_attention(tensor_t attn_val, tensor_t q, tensor_t k, tensor_t v, float
         return nvidia::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
                                       attn_val->dtype(), seq_len, kv_len, num_heads,
                                       num_kv_heads, head_dim, scale);
+#endif
+#ifdef ENABLE_SUDA_API
+    case LLAISYS_DEVICE_SUDA:
+        return suda::self_attention(attn_val->data(), q->data(), k->data(), v->data(),
+                                    attn_val->dtype(), seq_len, kv_len, num_heads,
+                                    num_kv_heads, head_dim, scale);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;
