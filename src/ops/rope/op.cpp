@@ -49,17 +49,17 @@ void rope(tensor_t out, tensor_t in, tensor_t pos_ids, float theta) {
                           LLAISYS_MEMCPY_D2H);
     }
     for (size_t i = 0; i < seq_len; i++) {
-        float pos = static_cast<float>(pos_host[i]);
+        double pos = static_cast<double>(pos_host[i]);
         for (size_t j = 0; j < half_dim; j++) {
-            // Compute freq matching Torch: positions / (theta ** (2*j/head_dim))
-            // Torch computes theta ** (float32) using float32 arithmetic.
-            // Use float32 powf to match Torch's float32 computation.
-            float exponent = 2.0f * static_cast<float>(j) / static_cast<float>(head_dim);
-            float denom = powf(theta, exponent);
-            float freq = pos / denom;
-            // Use float32 cosf/sinf to match Torch's float32 cos/sin.
-            float c = cosf(freq);
-            float s = sinf(freq);
+            // Compute freq matching Torch: positions / (theta ** (2*j/head_dim)).
+            // torch_rope (test/ops/rope.py) computes theta ** exponent using
+            // double precision (float64), so use double here to match it.
+            // (The NVIDIA rope kernel uses the same double-precision approach.)
+            double exponent = 2.0 * static_cast<double>(j) / static_cast<double>(head_dim);
+            double denom = std::pow(static_cast<double>(theta), exponent);
+            double freq = pos / denom;
+            float c = static_cast<float>(std::cos(freq));
+            float s = static_cast<float>(std::sin(freq));
 
             cos_buf[i * head_dim + j] = c;
             cos_buf[i * head_dim + j + half_dim] = c; // cos repeats for second half
